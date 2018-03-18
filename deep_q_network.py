@@ -12,7 +12,7 @@ import numpy as np
 from collections import deque
 
 GAME = 'tetris' # the name of the game being played for log files
-ACTIONS = 6 # number of valid actions
+ACTIONS = 3 # number of valid actions
 GAMMA = 0.99 # decay rate of past observations
 OBSERVE = 500. # timesteps to observe before training
 EXPLORE = 500. # frames over which to anneal epsilon
@@ -104,8 +104,8 @@ def trainNetwork(s, readout, h_fc1, sess):
 
     # saving and loading networks
     saver = tf.train.Saver()
-    sess.run(tf.initialize_all_variables())
-    checkpoint = tf.train.get_checkpoint_state("saved_networks")
+    sess.run(tf.global_variables_initializer())
+    checkpoint = tf.train.get_checkpoint_state(checkpoint_dir = "./saved_networks", latest_filename = "pong-dqn-1380")
     if checkpoint and checkpoint.model_checkpoint_path:
         saver.restore(sess, checkpoint.model_checkpoint_path)
         print ("Successfully loaded:", checkpoint.model_checkpoint_path)
@@ -114,8 +114,8 @@ def trainNetwork(s, readout, h_fc1, sess):
 
     epsilon = INITIAL_EPSILON
     t = 0
-    while "pigs" != "fly":
-        # choose an action epsilon greedily
+    while "Next Week" != "Final Week":
+        # choose anaction epsilon greedily
         readout_t = readout.eval(feed_dict = {s : [s_t]})[0]
         a_t = np.zeros([ACTIONS])
         action_index = 0
@@ -161,7 +161,7 @@ def trainNetwork(s, readout, h_fc1, sess):
                 if minibatch[i][4]:
                     y_batch.append(r_batch[i])
                 else:
-                    y_batch.append(r_batch[i] + GAMMA * np.max(readout_j1_batch[i]))
+                    y_batch.append(r_batch[i] + GAMMA * np.max(readout_j1_batch[i])) #todo: ? not reward
 
             # perform gradient step
             train_step.run(feed_dict = {
