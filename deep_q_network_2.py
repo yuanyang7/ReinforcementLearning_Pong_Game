@@ -5,22 +5,19 @@ import cv2
 import sys
 sys.path.append("Wrapped Game Code/")
 import pong_fun as game# whichever is imported "as game" will be used
-import dummy_game
-import tetris_fun
 import random
 import numpy as np
 from collections import deque
 
-GAME = 'tetris' # the name of the game being played for log files
+GAME = 'pingpong' # the name of the game being played for log files
 ACTIONS = 3 # number of valid actions
 GAMMA = 0.99 # decay rate of past observations
 OBSERVE = 500. # timesteps to observe before training
 EXPLORE = 500. # frames over which to anneal epsilon
 FINAL_EPSILON = 0.05 # final value of epsilon
 INITIAL_EPSILON = 1.0 # starting value of epsilon
-REPLAY_MEMORY = 590000 # number of previous transitions to remember
+REPLAY_MEMORY = 500000 # number of previous transitions to remember
 BATCH = 32 # size of minibatch
-K = 1 # only select an action every Kth frame, repeat prev for others
 
 def weight_variable(shape):
     initial = tf.truncated_normal(shape, stddev = 0.01)
@@ -58,15 +55,8 @@ def createNetwork():
 
     # hidden layers
     h_conv1 = tf.nn.relu(conv2d(s, W_conv1, 4) + b_conv1)
-    h_pool1 = max_pool_2x2(h_conv1)
-
-    h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2, 2) + b_conv2)
-    #h_pool2 = max_pool_2x2(h_conv2)
-
+    h_conv2 = tf.nn.relu(conv2d(h_conv1, W_conv2, 2) + b_conv2)
     h_conv3 = tf.nn.relu(conv2d(h_conv2, W_conv3, 1) + b_conv3)
-    #h_pool3 = max_pool_2x2(h_conv3)
-
-    #h_pool3_flat = tf.reshape(h_pool3, [-1, 256])
     h_conv3_flat = tf.reshape(h_conv3, [-1, 1600])
 
     h_fc1 = tf.nn.relu(tf.matmul(h_conv3_flat, W_fc1) + b_fc1)
@@ -105,21 +95,47 @@ def trainNetwork(s, readout, h_fc1, sess):
     # saving and loading networks
     saver = tf.train.Saver()
     sess.run(tf.global_variables_initializer())
-    checkpoint = tf.train.get_checkpoint_state(checkpoint_dir = "./saved_networks", latest_filename = "pong-dqn-1380")
-    if checkpoint and checkpoint.model_checkpoint_path:
-        saver.restore(sess, checkpoint.model_checkpoint_path)
-        print ("Successfully loaded:", checkpoint.model_checkpoint_path)
-    else:
-        print ("Could not find old network weights")
+    #saver.restore(sess, "/tmp/model.ckpt")
 
     epsilon = INITIAL_EPSILON
+
+    # observe state
+    for t in range(OBSERVE):
+        # choose an action epsilon greedily
+        readout_t = readout.eval(feed_dict = {s : [s_t]})[0]
+        a_t = np.zeros([ACTIONS])
+        action_index = random.randrange(ACTIONS)
+        a_t[action_index] = 1
+
+        # run the selected action and observe next state and reward
+        x_t1_col, r_t, terminal = game_state.frame_step(a_t)
+        x_t1 = cv2.cvtColor(cv2.resize(x_t1_col, (80, 80)), cv2.COLOR_BGR2GRAY)
+        ret, x_t1 = cv2.threshold(x_t1,1,255,cv2.THRESH_BINARY)
+        x_t1 = np.reshape(x_t1, (80, 80, 1))
+        s_t1 = np.append(x_t1, s_t[:,:,0:3], axis = 2)
+
+        # store the transition in D
+        D.append((s_t, a_t, r_t, s_t1, terminal))
+        if len(D) > REPLAY_MEMORY:
+            D.popleft()
+
+        # update the old values
+        s_t = s_t1
+
+        # print info
+        state = "observe"
+
+        print ("TIMESTEP", t, "/ STATE", state, "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", r_t, "/ Q_MAX %e" % np.max(readout_t))
+
     t = 0
-    while "Next Week" != "Final Week":
-        # choose anaction epsilon greedily
+
+    while True:
+        # choose an action epsilon greedily
         readout_t = readout.eval(feed_dict = {s : [s_t]})[0]
         a_t = np.zeros([ACTIONS])
         action_index = 0
-        if random.random() <= epsilon or t <= OBSERVE:
+
+        if random.random() <= epsilon:
             action_index = random.randrange(ACTIONS)
             a_t[action_index] = 1
         else:
@@ -127,47 +143,44 @@ def trainNetwork(s, readout, h_fc1, sess):
             a_t[action_index] = 1
 
         # scale down epsilon
-        if epsilon > FINAL_EPSILON and t > OBSERVE:
+        if epsilon > FINAL_EPSILON:
             epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
 
-        for i in range(0, K):
-            # run the selected action and observe next state and reward
-            x_t1_col, r_t, terminal = game_state.frame_step(a_t)
-            x_t1 = cv2.cvtColor(cv2.resize(x_t1_col, (80, 80)), cv2.COLOR_BGR2GRAY)
-            ret, x_t1 = cv2.threshold(x_t1,1,255,cv2.THRESH_BINARY)
-            x_t1 = np.reshape(x_t1, (80, 80, 1))
-            s_t1 = np.append(x_t1, s_t[:,:,0:3], axis = 2)
+        # run the selected action and observe next state and reward
+        x_t1_col, r_t, terminal = game_state.frame_step(a_t)
+        x_t1 = cv2.cvtColor(cv2.resize(x_t1_col, (80, 80)), cv2.COLOR_BGR2GRAY)
+        ret, x_t1 = cv2.threshold(x_t1,1,255,cv2.THRESH_BINARY)
+        x_t1 = np.reshape(x_t1, (80, 80, 1))
+        s_t1 = np.append(x_t1, s_t[:,:,0:3], axis = 2)
 
-            # store the transition in D
-            D.append((s_t, a_t, r_t, s_t1, terminal))
-            if len(D) > REPLAY_MEMORY:
-                D.popleft()
+        # store the transition in D
+        D.append((s_t, a_t, r_t, s_t1, terminal))
+        if len(D) > REPLAY_MEMORY:
+            D.popleft()
 
-        # only train if done observing
-        if t > OBSERVE:
-            # sample a minibatch to train on
-            minibatch = random.sample(D, BATCH)
+        # sample a minibatch to train on
+        minibatch = random.sample(D, BATCH)
 
-            # get the batch variables
-            s_j_batch = [d[0] for d in minibatch]
-            a_batch = [d[1] for d in minibatch]
-            r_batch = [d[2] for d in minibatch]
-            s_j1_batch = [d[3] for d in minibatch]
+        # get the batch variables
+        s_j_batch = [d[0] for d in minibatch]
+        a_batch = [d[1] for d in minibatch]
+        r_batch = [d[2] for d in minibatch]
+        s_j1_batch = [d[3] for d in minibatch]
 
-            y_batch = []
-            readout_j1_batch = readout.eval(feed_dict = {s : s_j1_batch})
-            for i in range(0, len(minibatch)):
-                # if terminal only equals reward
-                if minibatch[i][4]:
-                    y_batch.append(r_batch[i])
-                else:
-                    y_batch.append(r_batch[i] + GAMMA * np.max(readout_j1_batch[i])) #todo: ? not reward
+        y_batch = []
+        readout_j1_batch = readout.eval(feed_dict = {s : s_j1_batch})
+        for i in range(0, len(minibatch)):
+            # if terminal only equals reward
+            if minibatch[i][4]:
+                y_batch.append(r_batch[i])
+            else:
+                y_batch.append(r_batch[i] + GAMMA * np.max(readout_j1_batch[i])) #todo: ? not reward
 
-            # perform gradient step
-            train_step.run(feed_dict = {
-                y : y_batch,
-                a : a_batch,
-                s : s_j_batch})
+        # perform gradient step
+        train_step.run(feed_dict = {
+            y : y_batch,
+            a : a_batch,
+            s : s_j_batch})
 
         # update the old values
         s_t = s_t1
@@ -175,7 +188,7 @@ def trainNetwork(s, readout, h_fc1, sess):
 
         # save progress every 10000 iterations
         if t % 10000 == 0:
-            saver.save(sess, 'saved_networks/' + GAME + '-dqn', global_step = t)
+            saver.save(sess, "/save/model-" + str(t) + ".ckpt")
 
         # print info
         state = ""
